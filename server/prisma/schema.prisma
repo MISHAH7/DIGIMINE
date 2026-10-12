@@ -1,0 +1,413 @@
+// DIGIMINE — Mining Site Operations Management System
+// Money is Decimal(14,2) (KES). Quantities of ore are whole sacks (Int).
+
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+enum Role {
+  ADMIN
+  OWNER
+  SITE_MANAGER
+  CLERK
+  SUPERVISOR
+  FINANCE
+  SAFETY
+  AUDITOR
+}
+
+enum PayBasis {
+  PER_SACK
+  PER_SHIFT
+  PER_DAY
+  PER_HOUR
+  PER_TASK
+}
+
+enum MovementType {
+  OPENING
+  RECEIPT
+  SALE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  SALE_REVERSAL
+}
+
+enum PayMethod {
+  CASH
+  MPESA
+}
+
+enum RecordStatus {
+  ACTIVE
+  CANCELLED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ApprovalType {
+  STOCK_ADJUSTMENT
+  PAYOUT
+  SALE_CANCEL
+  EXPENSE
+  SHIFT_CLOSE
+}
+
+enum CashDirection {
+  IN
+  OUT
+}
+
+model User {
+  id           String     @id @default(uuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         Role
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  sites        UserSite[]
+}
+
+model Site {
+  id       String     @id @default(uuid())
+  code     String     @unique
+  name     String     @unique
+  active   Boolean    @default(true)
+  users    UserSite[]
+}
+
+model UserSite {
+  userId String
+  siteId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@id([userId, siteId])
+}
+
+model Material {
+  id     String  @id @default(uuid())
+  name   String  @unique
+  sackKg Decimal? @db.Decimal(8, 2)
+  active Boolean @default(true)
+}
+
+model Supplier {
+  id     String  @id @default(uuid())
+  name   String
+  phone  String?
+  notes  String?
+  active Boolean @default(true)
+}
+
+model Buyer {
+  id     String  @id @default(uuid())
+  name   String
+  phone  String?
+  active Boolean @default(true)
+}
+
+model Counter {
+  key   String @id
+  value Int    @default(0)
+}
+
+model Intake {
+  id           String       @id @default(uuid())
+  ref          String       @unique
+  clientId     String?      @unique
+  siteId       String
+  materialId   String
+  supplierId   String?
+  sacks        Int
+  notes        String?
+  receivedAt   DateTime
+  recordedById String
+  createdAt    DateTime     @default(now())
+  status       RecordStatus @default(ACTIVE)
+
+  @@index([siteId, receivedAt])
+}
+
+model StockMovement {
+  id          String       @id @default(uuid())
+  siteId      String
+  materialId  String
+  type        MovementType
+  sacks       Int // signed: + increases stock, - decreases stock
+  refType     String?
+  refId       String?
+  note        String?
+  createdById String
+  occurredAt  DateTime     @default(now())
+  createdAt   DateTime     @default(now())
+
+  @@index([siteId, materialId, occurredAt])
+}
+
+model Sale {
+  id            String       @id @default(uuid())
+  ref           String       @unique
+  clientId      String?      @unique
+  siteId        String
+  materialId    String
+  buyerId       String?
+  buyerName     String
+  sacks         Int
+  unitPrice     Decimal      @db.Decimal(14, 2)
+  total         Decimal      @db.Decimal(14, 2)
+  method        PayMethod
+  paymentRef    String?
+  soldAt        DateTime
+  recordedById  String
+  createdAt     DateTime     @default(now())
+  status        RecordStatus @default(ACTIVE)
+  cancelReason  String?
+  cancelledById String?
+  cancelledAt   DateTime?
+
+  @@index([siteId, soldAt])
+}
+
+model StockAdjustment {
+  id          String         @id @default(uuid())
+  siteId      String
+  materialId  String
+  sacks       Int // signed
+  reason      String
+  evidence    String?
+  status      ApprovalStatus @default(PENDING)
+  createdById String
+  createdAt   DateTime       @default(now())
+}
+
+model Worker {
+  id         String   @id @default(uuid())
+  name       String
+  phone      String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+}
+
+model RateRule {
+  id            String   @id @default(uuid())
+  basis         PayBasis
+  task          String?
+  siteId        String?
+  rate          Decimal  @db.Decimal(14, 2)
+  effectiveFrom DateTime @db.Date
+  createdById   String
+  createdAt     DateTime @default(now())
+
+  @@index([basis, effectiveFrom])
+}
+
+model WorkRecord {
+  id             String   @id @default(uuid())
+  clientId       String?  @unique
+  siteId         String
+  workerId       String
+  workDate       DateTime @db.Date
+  basis          PayBasis
+  task           String?
+  quantity       Decimal  @db.Decimal(10, 2)
+  rate           Decimal  @db.Decimal(14, 2)
+  expectedAmount Decimal  @db.Decimal(14, 2)
+  rateRuleId     String?
+  recordedById   String
+  verifiedById   String?
+  verifiedAt     DateTime?
+  payoutId       String?
+  createdAt      DateTime @default(now())
+
+  @@index([workerId, workDate])
+  @@index([siteId, workDate])
+}
+
+model Payout {
+  id               String         @id @default(uuid())
+  ref              String         @unique
+  clientId         String?        @unique
+  siteId           String
+  workerId         String
+  expectedAmount   Decimal        @db.Decimal(14, 2)
+  amountPaid       Decimal        @db.Decimal(14, 2)
+  method           PayMethod
+  paymentRef       String?
+  paidAt           DateTime
+  shortfallNote    String?
+  status           ApprovalStatus @default(PENDING)
+  recordedById     String
+  createdAt        DateTime       @default(now())
+
+  @@index([siteId, paidAt])
+}
+
+model Equipment {
+  id        String   @id @default(uuid())
+  name      String
+  category  String
+  siteId    String
+  status    String   @default("ACTIVE")
+  hours     Decimal  @default(0) @db.Decimal(10, 1)
+  createdAt DateTime @default(now())
+}
+
+model MaintenanceEvent {
+  id            String   @id @default(uuid())
+  equipmentId   String
+  siteId        String
+  eventDate     DateTime @db.Date
+  description   String
+  cost          Decimal  @default(0) @db.Decimal(14, 2)
+  downtimeHours Decimal  @default(0) @db.Decimal(8, 1)
+  recordedById  String
+  createdAt     DateTime @default(now())
+}
+
+model FuelEntry {
+  id           String   @id @default(uuid())
+  clientId     String?  @unique
+  siteId       String
+  kind         String // PURCHASE | ISSUE
+  category     String // EQUIPMENT | GENERATOR | VEHICLE | OTHER
+  equipmentId  String?
+  supplierId   String?
+  litres       Decimal  @db.Decimal(10, 2)
+  cost         Decimal? @db.Decimal(14, 2)
+  entryDate    DateTime @db.Date
+  recordedById String
+  createdAt    DateTime @default(now())
+
+  @@index([siteId, entryDate])
+}
+
+model Expense {
+  id           String         @id @default(uuid())
+  clientId     String?        @unique
+  siteId       String
+  category     String
+  description  String?
+  supplierId   String?
+  amount       Decimal        @db.Decimal(14, 2)
+  method       PayMethod
+  paymentRef   String?
+  spentAt      DateTime
+  status       ApprovalStatus @default(PENDING)
+  recordedById String
+  createdAt    DateTime       @default(now())
+
+  @@index([siteId, spentAt])
+}
+
+model CashEntry {
+  id           String        @id @default(uuid())
+  siteId       String
+  direction    CashDirection
+  category     String
+  amount       Decimal       @db.Decimal(14, 2)
+  method       PayMethod
+  reference    String?
+  sourceType   String?
+  sourceId     String?
+  note         String?
+  occurredAt   DateTime
+  recordedById String
+  createdAt    DateTime      @default(now())
+
+  @@index([siteId, occurredAt])
+}
+
+model ShiftClose {
+  id            String         @id @default(uuid())
+  siteId        String
+  businessDate  DateTime       @db.Date
+  openingCash   Decimal        @db.Decimal(14, 2)
+  expectedCash  Decimal        @db.Decimal(14, 2)
+  countedCash   Decimal        @db.Decimal(14, 2)
+  cashVariance  Decimal        @db.Decimal(14, 2)
+  mpesaExpected Decimal        @db.Decimal(14, 2)
+  mpesaCounted  Decimal        @db.Decimal(14, 2)
+  mpesaVariance Decimal        @db.Decimal(14, 2)
+  explanation   String?
+  status        ApprovalStatus @default(PENDING)
+  closedById    String
+  createdAt     DateTime       @default(now())
+
+  @@unique([siteId, businessDate])
+}
+
+model ApprovalRequest {
+  id            String             @id @default(uuid())
+  type          ApprovalType
+  entityId      String
+  siteId        String
+  amount        Decimal?           @db.Decimal(14, 2)
+  summary       String
+  requiredSteps Int                @default(1)
+  status        ApprovalStatus     @default(PENDING)
+  requestedById String
+  createdAt     DateTime           @default(now())
+  decidedAt     DateTime?
+  decisions     ApprovalDecision[]
+
+  @@index([status, siteId])
+}
+
+model ApprovalDecision {
+  id          String          @id @default(uuid())
+  requestId   String
+  step        Int
+  decidedById String
+  approved    Boolean
+  comment     String?
+  createdAt   DateTime        @default(now())
+  request     ApprovalRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@unique([requestId, decidedById])
+}
+
+model SafetyRecord {
+  id               String   @id @default(uuid())
+  clientId         String?  @unique
+  siteId           String
+  kind             String // INCIDENT | HAZARD | INSPECTION
+  title            String
+  description      String?
+  severity         String   @default("LOW")
+  correctiveAction String?
+  owner            String?
+  status           String   @default("OPEN") // OPEN | IN_PROGRESS | CLOSED
+  occurredAt       DateTime
+  reportedById     String
+  createdAt        DateTime @default(now())
+}
+
+model Setting {
+  key   String @id
+  value Json
+}
+
+model AuditLog {
+  id       BigInt   @id @default(autoincrement())
+  at       DateTime @default(now())
+  actorId  String?
+  action   String
+  entity   String
+  entityId String?
+  siteId   String?
+  detail   Json?
+
+  @@index([entity, entityId])
+  @@index([at])
+}
